@@ -3,9 +3,11 @@
 Subscription usage for the coding agent in the **focused** Herdr pane, in one tab-bar entry. Claude Code, Codex, and Antigravity are supported; every meter is shown as percent **used**.
 
 ```text
-Claude used · 5h 39% ↻2:30pm · wk 18% ↻Mon 5:00pm
-Codex used · 5h 24% ↻3:11pm · wk 1% ↻Fri 3:36pm
+✳ 5h 39% ↻2:30pm · wk 18% ↻Mon 5:00pm
+◆ 5h 24% ↻3:11pm · wk 1% ↻Fri 3:36pm
 ```
+
+Each reader is identified by a mark rather than a word, so the entry stays short.
 
 ## Features
 
@@ -86,6 +88,13 @@ BAR_HOT=80       # tab-bar '!!' suffix and dashboard red above this
 BAR_WARN=50      # dashboard amber from this
 STALE_SECS=1800  # how long a Claude profile counts as fresh
 CODEX_BIN=codex  # codex binary used for the rate-limits read
+
+# Tab-bar marks. A glyph renders only if some installed font carries it: Maple
+# Mono has the Geometric Shapes block (◆ ◇ ● ○ ◉ ◎) but no Dingbats, so the
+# default ✳ is drawn by a fallback font. Change these if a mark looks wrong.
+GLYPH_CLAUDE='✳'
+GLYPH_CODEX='◆'
+GLYPH_AGY='Antigravity'
 ```
 
 ## How it works
@@ -121,6 +130,7 @@ Three independent pieces:
 - **Antigravity says "not available for this account"**: Google refused the signed-in account — most often a location restriction, or a missing licence on a work account. Nothing to configure here; the message comes from Antigravity itself. Confirm with `agy -p "/usage"` in a terminal.
 - **No Fable / extra-usage entries**: the Claude usage API needs the macOS keychain. Approve the keychain prompt on first fetch, or check `USE_API` is not `0`. On Linux these entries are unavailable.
 - **A keychain dialog appeared**: that is the first usage-API fetch reading your own Claude Code OAuth token. "Always Allow" stops it from asking again.
+- **A tab-bar mark renders as a box or looks off-centre**: that glyph is missing from your terminal font and is being drawn by a fallback. Override `GLYPH_CLAUDE`, `GLYPH_CODEX` or `GLYPH_AGY` in the plugin config with a mark your font carries.
 - **Percentages look uncolored in the tab bar**: expected. The tab bar renders no ANSI colors; `!!` above 80 is the only marker there. The dashboard has the colors.
 
 ## Uninstall

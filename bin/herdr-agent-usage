@@ -246,6 +246,14 @@ short_label() {
   esac
 }
 
+# Tab-bar marks. A glyph only renders if some installed font has it, so these are
+# overridable: set GLYPH_CLAUDE / GLYPH_CODEX / GLYPH_AGY in the plugin config
+# file or the environment. Maple Mono carries the Geometric Shapes block
+# (◆ ◇ ● ○ ◉ ◎) but no Dingbats, so ✳ comes from a fallback font.
+GLYPH_CLAUDE=${GLYPH_CLAUDE:-✳}
+GLYPH_CODEX=${GLYPH_CODEX:-◆}
+GLYPH_AGY=${GLYPH_AGY:-Antigravity}
+
 # Tab-bar severity: "!!" after a percentage above BAR_HOT, nothing otherwise.
 # (The tab bar renders no ANSI colors; BAR_WARN still drives the dashboard's
 # amber bars.)
@@ -291,16 +299,15 @@ agy_bar() {
   local rows
   rows=$(agy_windows | awk -F'\t' '$1 !~ /^week:/')
   [ -n "$rows" ] || return 0
-  usage_bar Antigravity <<< "$rows"
+  usage_bar "$GLYPH_AGY" <<< "$rows"
 }
 
-usage_bar() {
-  local out="$1" key used epoch reset
-  local prefix=" used"
+usage_bar() { # mark, then "key<TAB>pct<TAB>epoch" rows on stdin
+  local out="$1" key used epoch reset sep=" "
   while IFS=$'\t' read -r key used epoch; do
     [ -n "$key" ] || continue
-    out+="${prefix} · $(short_label "$key") $(fmt_pct "$used")"
-    prefix=""
+    out+="${sep}$(short_label "$key") $(fmt_pct "$used")"
+    sep=" · "
     # Resets in the bar for the shared session and weekly windows only; per-model
     # weekly windows stay percent-only so the tab bar does not run out of width.
     case "$key" in
@@ -311,7 +318,7 @@ usage_bar() {
     reset=$(abs_time "$epoch")
     [ -n "$reset" ] && out+=" ↻$reset"
   done
-  if [ -n "$prefix" ]; then
+  if [ "$out" = "$1" ]; then
     out+=" —"
   fi
   printf '%s' "$out"
@@ -325,11 +332,11 @@ claude_bar() {
   ranked=$(profiles_ranked)
   primary=$(primary_file "$ranked")
   if [ -z "$primary" ]; then
-    printf 'Claude —'
+    printf '%s —' "$GLYPH_CLAUDE"
     return
   fi
 
-  usage_bar Claude < <(claude_windows "$primary")
+  usage_bar "$GLYPH_CLAUDE" < <(claude_windows "$primary")
   while IFS=$'\t' read -r pct _used _limit currency; do
     [ -n "$pct" ] && printf ' · %s %s' "$currency" "$(fmt_pct "$pct")"
   done < <(api_spend)
@@ -342,7 +349,7 @@ claude_bar() {
 bar() {
   case "$(focused_agent)" in
     claude) claude_bar ;;
-    codex) usage_bar Codex < <(codex_windows) ;;
+    codex) usage_bar "$GLYPH_CODEX" < <(codex_windows) ;;
     agy) agy_bar ;;
   esac
 }
