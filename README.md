@@ -4,10 +4,10 @@ Subscription usage for the coding agent in the **focused** Herdr pane, in one ta
 
 ```text
 ✳ 5h 39% ↻2:30pm · wk 18% ↻Mon 5:00pm
-◆ 5h 24% ↻3:11pm · wk 1% ↻Fri 3:36pm
+codex 5h 24% ↻3:11pm · wk 1% ↻Fri 3:36pm
 ```
 
-Each reader is identified by a mark rather than a word, so the entry stays short.
+Claude is identified by a mark; Codex and Antigravity by name, since neither has a glyph worth using. Each entry stays short either way.
 
 ## Features
 
@@ -91,10 +91,10 @@ CODEX_BIN=codex  # codex binary used for the rate-limits read
 
 # Tab-bar marks. A glyph renders only if some installed font carries it: Maple
 # Mono has the Geometric Shapes block (◆ ◇ ● ○ ◉ ◎) but no Dingbats, so the
-# default ✳ is drawn by a fallback font. Change these if a mark looks wrong.
+# default ✳ is drawn by a fallback font. Codex and Antigravity use plain words.
 GLYPH_CLAUDE='✳'
-GLYPH_CODEX='◆'
-GLYPH_AGY='Antigravity'
+GLYPH_CODEX='codex'
+GLYPH_AGY='antigravity'
 ```
 
 ## How it works
