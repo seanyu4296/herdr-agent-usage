@@ -20,6 +20,7 @@ All three readers share the focused-pane dispatch and the bar/dashboard renderer
 - [x] Dashboard: bars, reset countdowns, extra-usage spend, other profiles
 - [x] Weekly reset shown in the tab bar next to the 5h reset
 - [x] Optional OAuth usage-API fetch for per-model windows (macOS keychain)
+- [ ] `configure` refreshes stale checkout paths instead of refusing when its marker is present — every `herdr plugin update` moves the checkout, so today each release needs `uninstall` then `configure` by hand to repoint `config.toml` and the Claude `statusLine`
 
 Output: `Claude used · 5h 5% ↻7:30pm · wk 21% ↻Mon 5:00pm`
 
