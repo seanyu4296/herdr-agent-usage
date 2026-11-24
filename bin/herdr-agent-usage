@@ -251,8 +251,8 @@ short_label() {
 # file or the environment. Maple Mono carries the Geometric Shapes block
 # (◆ ◇ ● ○ ◉ ◎) but no Dingbats, so ✳ comes from a fallback font.
 GLYPH_CLAUDE=${GLYPH_CLAUDE:-✳}
-GLYPH_CODEX=${GLYPH_CODEX:-◆}
-GLYPH_AGY=${GLYPH_AGY:-Antigravity}
+GLYPH_CODEX=${GLYPH_CODEX:-codex}
+GLYPH_AGY=${GLYPH_AGY:-antigravity}
 
 # Tab-bar severity: "!!" after a percentage above BAR_HOT, nothing otherwise.
 # (The tab bar renders no ANSI colors; BAR_WARN still drives the dashboard's
@@ -489,11 +489,11 @@ herdr_config() {
   local cfg="${HERDR_CONFIG_PATH:-$HOME/.config/herdr/config.toml}" me tmp out
   me="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
   [ -f "$cfg" ] || : > "$cfg"
-  if grep -q 'herdr-agent-usage' "$cfg"; then
-    echo "herdr config already references herdr-agent-usage; not touching $cfg"
-    return
-  fi
   cp "$cfg" "$cfg.bak-claude-usage"
+  tmp="$cfg.tmp.$$"
+  # Drop our own previous lines first. Every plugin update installs a new
+  # checkout, so the recorded path goes stale; rewriting beats refusing.
+  grep -v '# herdr-agent-usage' "$cfg" > "$tmp" && mv "$tmp" "$cfg"
   tmp="$cfg.tmp.$$"
   local bar_entry="{ type = \"command\", command = \"bash '$me' bar\", interval_seconds = 2, timeout_seconds = 8 }"
   local bar_line="tab_bar_right = [ $bar_entry ] # herdr-agent-usage"
@@ -546,7 +546,17 @@ configure() {
   local current
   current=$(jq -r '.statusLine.command // ""' "$settings" 2>/dev/null)
   case "$current" in
-    *herdr-agent-usage*collect*) echo "statusLine wrapper already installed"; herdr_config; return ;;
+    *herdr-agent-usage*collect*)
+      # Ours already. Repoint if the checkout moved, which every plugin update does.
+      if [ "$current" = "'$me' collect" ]; then
+        echo "statusLine wrapper already installed"
+      else
+        jq --arg cmd "'$me' collect" '.statusLine.command = $cmd' \
+          "$settings" > "$settings.tmp" && mv "$settings.tmp" "$settings"
+        echo "statusLine repointed to $me"
+      fi
+      herdr_config
+      return ;;
   esac
   [ -n "$current" ] && printf '%s' "$current" > "$CHAIN" && echo "chaining to previous statusLine: $current"
   cp "$settings" "$settings.bak-claude-usage"
