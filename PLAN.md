@@ -9,7 +9,7 @@ What is shipped, in flight, blocked, and parked. Last updated 2026-11-24.
 | 1 | Claude Code usage | shipped |
 | 2 | Codex usage | shipped |
 | 3 | Antigravity usage | shipped, one task blocked |
-| 4 | Usage guard | draft, not implemented |
+| 4 | Usage guard | spec verified, not implemented |
 
 All three readers share the focused-pane dispatch and the bar/dashboard renderer, shipped with the first epic (`4711655`).
 
@@ -42,14 +42,27 @@ Output: `Codex used · 5h 24% ↻8:31pm · wk 1% ↻Tue 5:16pm`
 
 ### Epic 4 — Usage guard
 
-Goal: declare a trip line per provider window ("Claude weekly 40%") and have every Claude Code and Codex agent stop at a turn boundary when it is crossed.
+Goal: declare a trip line per provider window ("Claude weekly 40%") and have every Claude Code, Codex, and Antigravity agent stop at a turn boundary when it is crossed.
 
-- [ ] Review [`docs/guard-spec.md`](docs/guard-spec.md) (draft)
-- [ ] Implement v1 after review
+Spec: [`docs/guard-spec.md`](docs/guard-spec.md). Evidence: [`docs/guard-findings.md`](docs/guard-findings.md).
+
+- [x] Verify hook blocking on Claude Code (`PreToolUse` deny) and Codex (`PreToolUse` deny, `UserPromptSubmit` block)
+- [x] Verify Codex `preModelRequest` does not block — dropped from the design
+- [x] Measure the hot path: 6.8 ms per tool call; three "never do this in the hook" rules
+- [x] Decision-engine prototype, 20/20 against the failure-mode table
+- [x] Confirm the Antigravity hooks contract from the CLI's bundled `docs/hooks.md`
+- [ ] Close two design defects found while testing: the latch is not keyed by account, so one account's trip blocks another; `--until reset` cannot clear an unknown `resets_at`, so a trip can stick invisibly
+- [ ] Review the spec
+- [ ] Phase 1 — decision engine: `bin/guard.sh`, `policy.json` / `usage.json` / `decision`, latch, `guard arm|disarm|status|check`
+- [ ] Phase 2 — Claude hooks plus a reversible installer; use it for a week before going further
+- [ ] Phase 3 — Codex hooks (trust approval is interactive, not scriptable)
+- [ ] Phase 4 — Antigravity hooks: `PreInvocation` + `terminate` as the primary zero-token gate, `PreToolUse` + `deny` as backstop
+- [ ] Verification task: Claude `UserPromptSubmit` block is documented but untested
 
 ## Blocked
 
 - **The successful Antigravity `/usage` response is unverified** (task in Epic 3). Google refuses the signed-in account by location, and the quota backend answers `403 PERMISSION_DENIED`, so there is no quota to read and `parse_quota` runs only against a synthetic fixture. Unblocks with an eligible account or a VPN. Until then the `agy` tab-bar slot stays blank and the dashboard states the reason.
+- **Antigravity guard hooks are unverifiable for the same reason.** The hooks contract is confirmed from the CLI's bundled `docs/hooks.md`, but no hook has been executed. Epic 4 phase 4 is written blind and its acceptance criteria cannot be met until an eligible account exists.
 
 ## Ideas
 
@@ -65,6 +78,7 @@ Nothing here is committed to. Each carries the trigger that would make it worth 
 
 ## Shipped
 
+- 2026-11-24 — released v0.2.0: Claude Code and Codex usage, tested against live accounts
 - 2026-11-24 — local plan hub (`c2a842f`)
 - 2026-11-24 — Antigravity reader with failure states and cache-only tab bar (`d1948ec`)
 - 2026-11-24 — focused-pane dispatch, Claude Code and Codex readers (`4711655`)
