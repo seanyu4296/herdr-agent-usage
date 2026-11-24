@@ -274,6 +274,26 @@ codex_windows() {
   python3 "$(dirname "$0")/codex-limits.py" "$STATE_DIR" 2>/dev/null
 }
 
+# Antigravity reads its quota cache only; the slow CLI call happens in the background.
+agy_windows() {
+  python3 "$(dirname "$0")/agy-usage.py" "$STATE_DIR" 2>/dev/null |
+    awk -F'\t' 'NF == 3 && $2 ~ /^[0-9]+$/'
+}
+
+agy_state() { # "<state>\t<detail>" when quota is unavailable
+  python3 "$(dirname "$0")/agy-usage.py" "$STATE_DIR" 2>/dev/null |
+    awk -F'\t' 'NF != 3 || $2 !~ /^[0-9]+$/'
+}
+
+# Tab bar keeps the primary group's two windows; the extra model group lives in
+# the dashboard, where four buckets fit.
+agy_bar() {
+  local rows
+  rows=$(agy_windows | awk -F'\t' '$1 !~ /^week:/')
+  [ -n "$rows" ] || return 0
+  usage_bar Antigravity <<< "$rows"
+}
+
 usage_bar() {
   local out="$1" key used epoch reset
   local prefix=" used"
@@ -323,6 +343,7 @@ bar() {
   case "$(focused_agent)" in
     claude) claude_bar ;;
     codex) usage_bar Codex < <(codex_windows) ;;
+    agy) agy_bar ;;
   esac
 }
 
@@ -415,7 +436,24 @@ draw() {
         printf '\n  Rate limits unavailable. Check your Codex subscription sign-in.\n'
       fi
       ;;
-    *) printf '\n  Focus a Claude Code or Codex pane to see usage.\n' ;;
+    agy)
+      local agy_rows agy_state agy_detail
+      agy_rows=$(agy_windows)
+      printf '\n  Antigravity usage (%% used) · %s\n' "$(tz_name)"
+      if [ -n "$agy_rows" ]; then
+        draw_bars <<< "$agy_rows"
+      else
+        agy_state=$(agy_state)
+        agy_detail=$(printf '%s' "$agy_state" | cut -f2 | cut -c1-160)
+        case "$(printf '%s' "$agy_state" | cut -f1)" in
+          ineligible) printf '\n  Not available for this account: %s\n' "${agy_detail:-location restriction}" ;;
+          unauthenticated) printf '\n  Sign in first: run `agy` once in a terminal.\n' ;;
+          pending) printf '\n  Reading quota…\n' ;;
+          *) printf '\n  Quota unavailable. %s\n' "$agy_detail" ;;
+        esac
+      fi
+      ;;
+    *) printf '\n  Focus a Claude Code, Codex, or Antigravity pane to see usage.\n' ;;
   esac
 }
 

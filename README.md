@@ -1,6 +1,6 @@
 # herdr-agent-usage
 
-Subscription usage for the coding agent in the **focused** Herdr pane, in one tab-bar entry. Claude Code and Codex are supported; both are shown as percent **used**, the direction the providers report.
+Subscription usage for the coding agent in the **focused** Herdr pane, in one tab-bar entry. Claude Code, Codex, and Antigravity are supported; every meter is shown as percent **used**.
 
 ```text
 Claude used · 5h 39% ↻2:30pm · wk 18% ↻Mon 5:00pm
@@ -9,7 +9,7 @@ Codex used · 5h 24% ↻3:11pm · wk 1% ↻Fri 3:36pm
 
 ## Features
 
-- **Follows the focused pane.** Herdr exposes the active pane to custom commands as `HERDR_ACTIVE_PANE_ID`; the plugin resolves it with `herdr pane get` and picks the reader for the agent that pane runs (`claude` or `codex`). No focused agent, or an agent without a reader, renders nothing.
+- **Follows the focused pane.** Herdr exposes the active pane to custom commands as `HERDR_ACTIVE_PANE_ID`; the plugin resolves it with `herdr pane get` and picks the reader for the agent that pane runs (`claude`, `codex`, or `agy`). No focused agent, or an agent without a reader, renders nothing.
 - **Tab-bar summary**, always visible: session window and weekly window with their reset times; further windows (per-model weeklies, extra-usage credits) as percent only, so the bar keeps its width. A percentage above 80 gets a `!!` suffix; a trailing `⁺` means another signed-in Claude profile is also active.
 - **Popup dashboard** on a keybinding: severity-colored bars with a threshold tick, reset countdowns (`↻ 33m · 2:30pm`), extra-usage spend with amounts, active session count, one compact line per other signed-in Claude profile. Any key refreshes, auto every 30s, `q` closes.
 - **No credentials for the core data.** Claude data is pushed by Claude Code's own `statusLine` hook; Codex data comes from the local `codex app-server` over stdio. An optional macOS-only Claude usage-API fetch adds per-model windows and spend.
@@ -17,7 +17,7 @@ Codex used · 5h 24% ↻3:11pm · wk 1% ↻Fri 3:36pm
 
 ## Requirements
 
-Herdr 0.8+, `bash`, `jq`, `curl`. Codex support additionally needs `python3` and the `codex` CLI on `PATH`. macOS or Linux; the optional Claude usage API is macOS-only.
+Herdr 0.8+, `bash`, `jq`, `curl`. Codex support additionally needs `python3` and the `codex` CLI on `PATH`; Antigravity support needs `agy` on `PATH`. macOS or Linux; the optional Claude usage API is macOS-only.
 
 ## Installation
 
@@ -95,6 +95,7 @@ Three independent pieces:
 1. **Focused-pane dispatch.** The tab-bar command gets `HERDR_ACTIVE_PANE_ID`, and `herdr pane get <pane_id>` returns the agent Herdr detects in that pane. `bar` and `dashboard` switch readers on that value.
 2. **Claude: statusLine push (no credentials).** Claude Code invokes the configured `statusLine` command with a JSON payload on stdin that includes `rate_limits`. This plugin's `collect` captures it and chains to whatever statusLine command was installed before, passing stdin and stdout through untouched. Percentages come from `used_percentage`; reset times from `resets_at`.
 3. **Codex: local app-server read.** `bin/codex-limits.py` starts `codex app-server --listen stdio://`, sends `initialize`, `initialized`, then `account/rateLimits/read`, and reads `usedPercent` plus `resetsAt` from each bucket's primary and secondary window. The window label comes from `windowDurationMins` (300 → `5h`, 10080 → `wk`). Results are cached for 15 minutes, with a refresh at most every 2 minutes; a failed read leaves the last good cache in place.
+4. **Antigravity: CLI read, cached.** `bin/agy-usage.py` runs `agy -p "/usage" --output-format json`, inverts the reported remaining fraction into percent used, and caches the result. The CLI authenticates and hits the network per call, so the tab bar only ever reads the cache and a detached background refresh (at most every 5 minutes) fills it; a cached answer stays usable for an hour. When quota is unavailable the reader reports why instead of guessing: `ineligible` (account refused, e.g. by location), `unauthenticated` (run `agy` once to sign in), or the raw error.
 
 **Claude: several accounts.** Sessions signed into different accounts or organizations report different limits, so payloads are clustered into profiles keyed by their weekly reset time. The profile whose weekly reset matches the usage API response is the logged-in account and is shown as primary; without API data, the profile with the most active sessions wins. Profiles quiet for 30 minutes are dropped from the display.
 
@@ -109,7 +110,7 @@ Three independent pieces:
 | `collect` | statusLine hook (invoked by Claude Code; captures payload, chains onward) |
 | `bar` | one-line tab-bar summary for the focused pane's agent |
 | `dashboard` | interactive popup with bars |
-| `draw [claude\|codex]` | one-shot render (debugging; defaults to the focused pane) |
+| `draw [claude\|codex\|agy]` | one-shot render (debugging; defaults to the focused pane) |
 | `configure` / `uninstall` | install/remove the statusLine wrapper and config entries, reversibly |
 
 ## Troubleshooting
@@ -117,6 +118,7 @@ Three independent pieces:
 - **Tab bar is empty**: the focused pane runs no agent Herdr recognizes, or one without a reader. Focus a Claude Code or Codex pane.
 - **Tab bar shows `Claude —`**: no Claude Code session has reported for 30 minutes. Open or use any session; data lands within a minute.
 - **Dashboard says rate limits are unavailable**: Codex returned no bucket, usually a sign-in problem. Run `codex` once and check the account, then reopen the dashboard.
+- **Antigravity says "not available for this account"**: Google refused the signed-in account — most often a location restriction, or a missing licence on a work account. Nothing to configure here; the message comes from Antigravity itself. Confirm with `agy -p "/usage"` in a terminal.
 - **No Fable / extra-usage entries**: the Claude usage API needs the macOS keychain. Approve the keychain prompt on first fetch, or check `USE_API` is not `0`. On Linux these entries are unavailable.
 - **A keychain dialog appeared**: that is the first usage-API fetch reading your own Claude Code OAuth token. "Always Allow" stops it from asking again.
 - **Percentages look uncolored in the tab bar**: expected. The tab bar renders no ANSI colors; `!!` above 80 is the only marker there. The dashboard has the colors.
