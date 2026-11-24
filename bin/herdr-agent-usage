@@ -521,11 +521,31 @@ herdr_config() {
     echo "herdr config updated (server not running; it loads on next start). Backup: $cfg.bak-claude-usage"
   elif [ "$(printf '%s' "$out" | jq -r '.result.diagnostics | length' 2>/dev/null)" = "0" ]; then
     echo "herdr config updated: tab-bar entry + prefix+u dashboard. Backup: $cfg.bak-claude-usage"
+    reload_other_sessions
   else
     cp "$cfg.bak-claude-usage" "$cfg"
     "$HERDR" server reload-config >/dev/null 2>&1
     echo "herdr rejected the config change; backup restored. Add the entries manually (see README)."
   fi
+}
+
+# Every Herdr session is a separate server holding its own in-memory config, and
+# `server reload-config` only reaches the session it is called from. Without this,
+# a session started earlier keeps running the previous checkout's tab-bar command.
+reload_other_sessions() {
+  local current others name
+  current=${HERDR_SOCKET_PATH:-}
+  others=$("$HERDR" session list --json 2>/dev/null \
+    | jq -r --arg cur "$current" '.sessions[] | select(.running) | select($cur == "" or .socket_path != $cur) | .name' 2>/dev/null)
+  [ -n "$others" ] || return 0
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    if "$HERDR" --session "$name" server reload-config >/dev/null 2>&1; then
+      echo "reloaded other session: $name"
+    else
+      echo "could not reload session $name; run: herdr --session $name server reload-config"
+    fi
+  done <<< "$others"
 }
 
 herdr_config_remove() {

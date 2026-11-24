@@ -21,6 +21,7 @@ All three readers share the focused-pane dispatch and the bar/dashboard renderer
 - [x] Weekly reset shown in the tab bar next to the 5h reset
 - [x] Optional OAuth usage-API fetch for per-model windows (macOS keychain)
 - [x] `configure` repoints a moved checkout instead of refusing when its marker is present, so a release no longer needs `uninstall` then `configure` by hand
+- [x] `configure` reloads every running Herdr session — each session is a separate server with its own in-memory config, so a session left unreloaded kept running the previous checkout's tab-bar command
 
 Output: `Claude used · 5h 5% ↻7:30pm · wk 21% ↻Mon 5:00pm`
 
