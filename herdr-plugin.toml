@@ -1,24 +1,24 @@
-id = "herdr-claude-usage"
-name = "Claude Usage"
-version = "0.1.1"
+id = "herdr-agent-usage"
+name = "Agent Usage"
+version = "0.1.0"
 min_herdr_version = "0.8.0"
-description = "Claude Code usage limits in the Herdr tab bar, plus a popup with bars for the session, the week and each model. Reads the payload Claude Code already sends to its statusLine hook. No credentials needed."
+description = "Subscription usage and reset times for the focused Claude Code or Codex pane."
 platforms = ["macos", "linux"]
 
 [[actions]]
 id = "configure"
-title = "Claude Usage: set up statusLine, tab bar, and keybinding"
+title = "Agent Usage: set up statusLine, tab bar, and keybinding"
 contexts = ["workspace"]
-command = ["bash", "bin/herdr-claude-usage", "configure"]
+command = ["bash", "bin/herdr-agent-usage", "configure"]
 
 [[actions]]
 id = "uninstall"
-title = "Claude Usage: remove statusLine and config entries"
+title = "Agent Usage: remove statusLine and config entries"
 contexts = ["workspace"]
-command = ["bash", "bin/herdr-claude-usage", "uninstall"]
+command = ["bash", "bin/herdr-agent-usage", "uninstall"]
 
 [[panes]]
 id = "dashboard"
-title = "Claude usage"
+title = "Agent usage"
 placement = "overlay"
-command = ["bash", "bin/herdr-claude-usage", "dashboard"]
+command = ["bash", "bin/herdr-agent-usage", "dashboard"]

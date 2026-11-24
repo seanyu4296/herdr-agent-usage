@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# herdr-claude-usage: global Claude Code plan usage inside Herdr.
+# herdr-agent-usage: usage for the focused coding agent in Herdr.
 #
 # Data source: Claude Code invokes the configured statusLine command with a JSON
 # payload on stdin that includes rate_limits (five_hour / seven_day / per-model
@@ -12,9 +12,10 @@ set -u
 case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in *UTF-8*|*utf8*) ;; *) export LC_ALL=C.UTF-8 ;; esac
 
 HERDR=${HERDR_BIN_PATH:-herdr}
-STATE_DIR=${HERDR_PLUGIN_STATE_DIR:-$HOME/.local/state/herdr/plugins/herdr-claude-usage}
-CONFIG_DIR=${HERDR_PLUGIN_CONFIG_DIR:-$HOME/.config/herdr/plugins/config/herdr-claude-usage}
-PAYLOAD="$STATE_DIR/payload.json"
+STATE_DIR=${HERDR_PLUGIN_STATE_DIR:-$HOME/.local/state/herdr/plugins/herdr-agent-usage}
+CONFIG_DIR=${HERDR_PLUGIN_CONFIG_DIR:-$HOME/.config/herdr/plugins/config/herdr-agent-usage}
+CLAUDE_STATE_DIR=${CLAUDE_USAGE_STATE_DIR:-$STATE_DIR}
+PAYLOAD="$CLAUDE_STATE_DIR/payload.json"
 CHAIN="$CONFIG_DIR/chain"
 STALE_SECS=${STALE_SECS:-1800}
 
@@ -29,13 +30,14 @@ mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR"
 collect() {
   local payload key sid
   payload=$(cat)
+  mkdir -p "$CLAUDE_STATE_DIR"
   if [ -n "$payload" ]; then
     printf '%s' "$payload" > "$PAYLOAD.tmp.$$" && mv "$PAYLOAD.tmp.$$" "$PAYLOAD"
     # Weekly reset is account-scoped and stable for a week, so it makes a good profile key.
     key=$(printf '%s' "$payload" | jq -r '(.rate_limits.seven_day.resets_at // .rate_limits.five_hour.resets_at // 0) | tostring' 2>/dev/null)
     if [ -n "$key" ] && [ "$key" != "0" ]; then
-      mkdir -p "$STATE_DIR/profiles"
-      local pfile="$STATE_DIR/profiles/$key.json" stored="$payload"
+      mkdir -p "$CLAUDE_STATE_DIR/profiles"
+      local pfile="$CLAUDE_STATE_DIR/profiles/$key.json" stored="$payload"
       # Claude Code sometimes omits five_hour from a payload. Keep the previous
       # window for this profile while it has not expired, so the 5h segment
       # does not flicker away whenever such a session writes last.
@@ -52,10 +54,10 @@ collect() {
       sid=$(printf '%s' "$payload" | jq -r '.session_id // empty' 2>/dev/null)
       if [ -n "$sid" ]; then
         # Unique tmp per process: many sessions' statusLines run this concurrently.
-        { grep -v "^$sid	" "$STATE_DIR/profiles/$key.sessions" 2>/dev/null; \
+        { grep -v "^$sid	" "$CLAUDE_STATE_DIR/profiles/$key.sessions" 2>/dev/null; \
           printf '%s\t%s\t%s\n' "$sid" "$(date +%s)" \
             "$(printf '%s' "$payload" | jq -r '.cwd // "" | split("/") | last // ""' 2>/dev/null)"; } \
-          > "$STATE_DIR/profiles/$key.sessions.tmp.$$" && mv "$STATE_DIR/profiles/$key.sessions.tmp.$$" "$STATE_DIR/profiles/$key.sessions"
+          > "$CLAUDE_STATE_DIR/profiles/$key.sessions.tmp.$$" && mv "$CLAUDE_STATE_DIR/profiles/$key.sessions.tmp.$$" "$CLAUDE_STATE_DIR/profiles/$key.sessions"
       fi
     fi
   fi
@@ -70,8 +72,8 @@ collect() {
 profiles_ranked() {
   local now cutoff f s n names mtime
   now=$(date +%s); cutoff=$((now - STALE_SECS))
-  find "$STATE_DIR" -name '*.tmp.*' -mmin +60 -delete 2>/dev/null
-  for f in "$STATE_DIR"/profiles/*.json; do
+  find "$CLAUDE_STATE_DIR" -name '*.tmp.*' -mmin +60 -delete 2>/dev/null
+  for f in "$CLAUDE_STATE_DIR"/profiles/*.json; do
     [ -f "$f" ] || continue
     mtime=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f")
     s="${f%.json}.sessions"
@@ -124,7 +126,7 @@ windows() {
 # Reads the user's own Claude Code OAuth token from the macOS keychain (first use
 # triggers a keychain permission prompt) and calls the official usage endpoint.
 # The token stays in this process; only the usage JSON (no secrets) is cached.
-API_CACHE="$STATE_DIR/api_usage.json"
+API_CACHE="$CLAUDE_STATE_DIR/api_usage.json"
 USE_API=${USE_API:-1}
 
 fetch_api() {
@@ -223,11 +225,14 @@ rel_time() { # epoch -> "2h04m" / "45m" / "2d3h"
   else printf '%dm' $((d / 60)); fi
 }
 
-abs_time() { # epoch -> "3pm" today, "Wed 6pm" otherwise
+abs_time() { # epoch -> "3:30pm" today, "Wed 6:00pm" otherwise
+  local clock
+  clock=$(efmt "$1" +%-I:%M%p | tr 'A-Z' 'a-z')
+  [ -n "$clock" ] || return
   if [ "$(efmt "$1" +%Y%m%d)" = "$(date +%Y%m%d)" ]; then
-    efmt "$1" +%-I%p | tr 'A-Z' 'a-z'
+    printf '%s' "$clock"
   else
-    printf '%s %s' "$(efmt "$1" +%a)" "$(efmt "$1" +%-I%p | tr 'A-Z' 'a-z')"
+    printf '%s %s' "$(efmt "$1" +%a)" "$clock"
   fi
 }
 
@@ -250,40 +255,75 @@ fmt_pct() {
   if [ "$1" -gt "$BAR_HOT" ] 2>/dev/null; then printf '%2d%%!!' "$1"; else printf '%2d%%' "$1"; fi
 }
 
-# ---------- bar: one-line summary for the Herdr tab bar ----------
-# e.g.  ✳ 5h 24% ↻2am · wk 17% · Fable 13% · € 87%   (+ = another signed-in profile active)
-bar() {
+# Herdr supplies the active pane rather than the pane that started the command.
+focused_agent() {
+  [ -n "${HERDR_ACTIVE_PANE_ID:-}" ] || return 0
+  "$HERDR" pane get "$HERDR_ACTIVE_PANE_ID" 2>/dev/null |
+    jq -r '.result.pane.agent // empty' 2>/dev/null
+}
+
+# Readers emit a common row: window key, percent used, reset timestamp (0 if unknown).
+claude_windows() {
+  local file="$1"
+  windows "$file" | grep -q '^five_hour' || printf 'five_hour\t0\t0\n'
+  windows "$file"
+  api_extra_windows
+}
+
+codex_windows() {
+  python3 "$(dirname "$0")/codex-limits.py" "$STATE_DIR" 2>/dev/null
+}
+
+usage_bar() {
+  local out="$1" key used epoch reset
+  local prefix=" used"
+  while IFS=$'\t' read -r key used epoch; do
+    [ -n "$key" ] || continue
+    out+="${prefix} · $(short_label "$key") $(fmt_pct "$used")"
+    prefix=""
+    # Resets in the bar for the shared session and weekly windows only; per-model
+    # weekly windows stay percent-only so the tab bar does not run out of width.
+    case "$key" in
+      five_hour|seven_day) ;;
+      *) continue ;;
+    esac
+    [ "$epoch" -gt 0 ] 2>/dev/null || continue
+    reset=$(abs_time "$epoch")
+    [ -n "$reset" ] && out+=" ↻$reset"
+  done
+  if [ -n "$prefix" ]; then
+    out+=" —"
+  fi
+  printf '%s' "$out"
+}
+
+claude_bar() {
+  local ranked primary count currency pct _used _limit
+  # Read the cached API data and refresh in the background: the tab bar must not
+  # wait on a network round trip.
   ( fetch_api & ) 2>/dev/null
-  local ranked primary others
   ranked=$(profiles_ranked)
   primary=$(primary_file "$ranked")
-  others=$(printf '%s\n' "$ranked" | grep -c . || true)
-  [ -n "$primary" ] || { printf '✳ Claude —'; exit 0; }
+  if [ -z "$primary" ]; then
+    printf 'Claude —'
+    return
+  fi
 
-  local parts=() key used epoch seg hr
-  # No active 5h window means nothing used in it; say 0% rather than vanish.
-  windows "$primary" | grep -q '^five_hour' || parts+=("5h 0%")
-  while IFS=$'\t' read -r key used epoch; do
-    seg="$(short_label "$key") $(fmt_pct "$used")"
-    if [ "$key" = "five_hour" ] && [ "$epoch" -gt 0 ] 2>/dev/null; then
-      hr=$(efmt "$epoch" +%-I%p | tr 'A-Z' 'a-z')
-      [ -n "$hr" ] && seg="$seg ↻$hr"
-    fi
-    parts+=("$seg")
-  done < <(windows "$primary")
-  while IFS=$'\t' read -r key used epoch; do
-    [ -n "$key" ] && parts+=("$(short_label "$key") $(fmt_pct "$used")")
-  done < <(api_extra_windows)
-  local pct _u _l cur
-  while IFS=$'\t' read -r pct _u _l cur; do
-    [ -n "$pct" ] && parts+=("${cur} $(fmt_pct "$pct")")
+  usage_bar Claude < <(claude_windows "$primary")
+  while IFS=$'\t' read -r pct _used _limit currency; do
+    [ -n "$pct" ] && printf ' · %s %s' "$currency" "$(fmt_pct "$pct")"
   done < <(api_spend)
+  count=$(printf '%s\n' "$ranked" | grep -c . || true)
+  if [ "$count" -gt 1 ]; then
+    printf ' +'
+  fi
+}
 
-  [ "${#parts[@]}" -gt 0 ] || { printf '✳ Claude —'; exit 0; }
-  local out="✳ ${parts[0]}" i
-  for ((i = 1; i < ${#parts[@]}; i++)); do out+=" · ${parts[$i]}"; done
-  [ "$others" -gt 1 ] 2>/dev/null && out="$out +"
-  printf '%s' "$out"
+bar() {
+  case "$(focused_agent)" in
+    claude) claude_bar ;;
+    codex) usage_bar Codex < <(codex_windows) ;;
+  esac
 }
 
 # ---------- dashboard: pretty popup ----------
@@ -316,14 +356,14 @@ draw_one() { # key used epoch [right-text]
   printf '  %s%s%s %3d%%\n' "$color" "$cells" "$rst" "$used"
 }
 
-draw_bars() { # payload_file
+draw_bars() {
   local key used epoch
   while IFS=$'\t' read -r key used epoch; do
     draw_one "$key" "$used" "$epoch"
-  done < <(windows "$1")
+  done
 }
 
-draw() {
+draw_claude() {
   local dim=$'\e[38;5;245m' rst=$'\e[0m' bold=$'\e[1m'
   local tz ranked primary nsess age agetxt
   tz=$(tz_name)
@@ -341,16 +381,9 @@ draw() {
   if [ "$age" -lt 120 ]; then agetxt="${age}s ago"
   else agetxt="$((age / 60))m ago"; fi
   nsess=$(printf '%s\n' "$ranked" | awk -F'\t' -v f="$primary" '$1 == f {print $2}')
-  printf '\n  %s✳ Claude usage%s   %s%s · %s session(s) · %s%s\n' \
+  printf '\n  %s✳ Claude usage (%% used)%s   %s%s · %s session(s) · %s%s\n' \
     "$bold" "$rst" "$dim" "$agetxt" "${nsess:-?}" "$tz" "$rst"
-  windows "$primary" | grep -q '^five_hour' || draw_one five_hour 0 0
-  draw_bars "$primary"
-
-  # Per-model weekly windows only the usage API knows about (e.g. Fable).
-  local key used epoch
-  while IFS=$'\t' read -r key used epoch; do
-    [ -n "$key" ] && draw_one "$key" "$used" "$epoch"
-  done < <(api_extra_windows)
+  draw_bars < <(claude_windows "$primary")
 
   # Monthly extra-usage credits.
   local pct spent limit cur
@@ -369,10 +402,28 @@ draw() {
   done < <(printf '%s\n' "$ranked")
 }
 
+draw() {
+  case "${1:-$(focused_agent)}" in
+    claude) draw_claude ;;
+    codex)
+      local rows
+      rows=$(codex_windows)
+      printf '\n  Codex usage (%% used) · %s\n' "$(tz_name)"
+      if [ -n "$rows" ]; then
+        draw_bars <<< "$rows"
+      else
+        printf '\n  Rate limits unavailable. Check your Codex subscription sign-in.\n'
+      fi
+      ;;
+    *) printf '\n  Focus a Claude Code or Codex pane to see usage.\n' ;;
+  esac
+}
+
 dashboard() {
-  local frame key seq rows
+  local agent frame key seq rows
+  agent=$(focused_agent)
   while :; do
-    frame=$(draw; printf '\n  \e[38;5;245mq close · any key refresh · auto 30s\e[0m\n')
+    frame=$(draw "$agent"; printf '\n  \e[38;5;245mq close · any key refresh · auto 30s\e[0m\n')
     # The popup has a fixed height; drop the spacer lines when the rows would not fit.
     rows=$(tput lines 2>/dev/null || echo 999)
     [ "$(printf '%s\n' "$frame" | wc -l)" -gt "$rows" ] && frame=$(printf '%s\n' "$frame" | awk 'NF || NR < 4')
@@ -387,20 +438,20 @@ dashboard() {
 }
 
 # Write the tab-bar entry and dashboard keybinding into herdr's config.toml.
-# Every added line carries a "# herdr-claude-usage" marker so uninstall can
+# Every added line carries a "# herdr-agent-usage" marker so uninstall can
 # remove exactly what was added. Rolls back if herdr rejects the result.
 herdr_config() {
   local cfg="${HERDR_CONFIG_PATH:-$HOME/.config/herdr/config.toml}" me tmp out
   me="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
   [ -f "$cfg" ] || : > "$cfg"
-  if grep -q 'herdr-claude-usage' "$cfg"; then
-    echo "herdr config already references herdr-claude-usage; not touching $cfg"
+  if grep -q 'herdr-agent-usage' "$cfg"; then
+    echo "herdr config already references herdr-agent-usage; not touching $cfg"
     return
   fi
   cp "$cfg" "$cfg.bak-claude-usage"
   tmp="$cfg.tmp.$$"
-  local bar_entry="{ type = \"command\", command = \"bash '$me' bar\", interval_seconds = 30, timeout_seconds = 5 }"
-  local bar_line="tab_bar_right = [ $bar_entry ] # herdr-claude-usage"
+  local bar_entry="{ type = \"command\", command = \"bash '$me' bar\", interval_seconds = 2, timeout_seconds = 8 }"
+  local bar_line="tab_bar_right = [ $bar_entry ] # herdr-agent-usage"
   if grep -q '^[[:space:]]*tab_bar_right' "$cfg"; then
     echo "config already defines tab_bar_right; add this entry to it yourself:"
     echo "  $bar_entry"
@@ -408,17 +459,17 @@ herdr_config() {
   elif grep -q '^\[ui\][[:space:]]*$' "$cfg"; then
     awk -v line="$bar_line" '{print} /^\[ui\][[:space:]]*$/ && !done {print line; done=1}' "$cfg" > "$tmp"
   else
-    { cat "$cfg"; printf '\n[ui] # herdr-claude-usage\n%s\n' "$bar_line"; } > "$tmp"
+    { cat "$cfg"; printf '\n[ui] # herdr-agent-usage\n%s\n' "$bar_line"; } > "$tmp"
   fi
   {
     cat "$tmp"
-    printf '\n[[keys.command]] # herdr-claude-usage\n'
-    printf 'key = "prefix+u" # herdr-claude-usage\n'
-    printf 'type = "popup" # herdr-claude-usage\n'
-    printf 'command = "bash '\''%s'\'' dashboard" # herdr-claude-usage\n' "$me"
-    printf 'description = "Claude usage dashboard" # herdr-claude-usage\n'
-    printf 'width = 64 # herdr-claude-usage\n'
-    printf 'height = 20 # herdr-claude-usage\n'
+    printf '\n[[keys.command]] # herdr-agent-usage\n'
+    printf 'key = "prefix+u" # herdr-agent-usage\n'
+    printf 'type = "popup" # herdr-agent-usage\n'
+    printf 'command = "bash '\''%s'\'' dashboard" # herdr-agent-usage\n' "$me"
+    printf 'description = "Agent usage dashboard" # herdr-agent-usage\n'
+    printf 'width = 64 # herdr-agent-usage\n'
+    printf 'height = 20 # herdr-agent-usage\n'
   } > "$tmp.2" && mv "$tmp.2" "$cfg" && rm -f "$tmp"
   out=$("$HERDR" server reload-config 2>/dev/null)
   if [ -z "$out" ]; then
@@ -434,8 +485,8 @@ herdr_config() {
 
 herdr_config_remove() {
   local cfg="${HERDR_CONFIG_PATH:-$HOME/.config/herdr/config.toml}"
-  if [ -f "$cfg" ] && grep -q '# herdr-claude-usage' "$cfg"; then
-    grep -v '# herdr-claude-usage' "$cfg" > "$cfg.tmp.$$" && mv "$cfg.tmp.$$" "$cfg"
+  if [ -f "$cfg" ] && grep -q '# herdr-agent-usage' "$cfg"; then
+    grep -v '# herdr-agent-usage' "$cfg" > "$cfg.tmp.$$" && mv "$cfg.tmp.$$" "$cfg"
     "$HERDR" server reload-config >/dev/null 2>&1
     echo "removed herdr config entries"
   fi
@@ -450,7 +501,7 @@ configure() {
   local current
   current=$(jq -r '.statusLine.command // ""' "$settings" 2>/dev/null)
   case "$current" in
-    *herdr-claude-usage*collect*) echo "statusLine wrapper already installed"; herdr_config; return ;;
+    *herdr-agent-usage*collect*) echo "statusLine wrapper already installed"; herdr_config; return ;;
   esac
   [ -n "$current" ] && printf '%s' "$current" > "$CHAIN" && echo "chaining to previous statusLine: $current"
   cp "$settings" "$settings.bak-claude-usage"
@@ -477,8 +528,8 @@ case "${1:-}" in
   collect) collect ;;
   bar) bar ;;
   dashboard) dashboard ;;
-  draw) draw; printf '\n' ;;
+  draw) draw "${2:-}"; printf '\n' ;;
   configure) configure ;;
   uninstall) uninstall ;;
-  *) printf 'usage: herdr-claude-usage collect|bar|dashboard|draw|configure|uninstall\n' >&2; exit 2 ;;
+  *) printf 'usage: herdr-agent-usage collect|bar|dashboard|draw|configure|uninstall\n' >&2; exit 2 ;;
 esac
