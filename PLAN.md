@@ -1,7 +1,6 @@
 # Plan
 
-Local project management for this repo: what is shipped, in flight, blocked, and parked.
-Last updated 2026-11-24.
+What is shipped, in flight, blocked, and parked. Last updated 2026-11-24.
 
 ## Epics
 
