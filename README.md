@@ -84,6 +84,7 @@ Optional `config` file in the plugin config dir (`herdr plugin config-dir herdr-
 
 ```sh
 USE_API=1        # 0 disables the Claude OAuth usage API fetch
+API_TTL=300      # seconds a fetched API answer is trusted for the shared windows
 BAR_HOT=80       # tab-bar '!!' suffix and dashboard red above this
 BAR_WARN=50      # dashboard amber from this
 STALE_SECS=1800  # how long a Claude profile counts as fresh
@@ -103,6 +104,8 @@ Three independent pieces:
 
 1. **Focused-pane dispatch.** The tab-bar command gets `HERDR_ACTIVE_PANE_ID`, and `herdr pane get <pane_id>` returns the agent Herdr detects in that pane. `bar` and `dashboard` switch readers on that value.
 2. **Claude: statusLine push (no credentials).** Claude Code invokes the configured `statusLine` command with a JSON payload on stdin that includes `rate_limits`. This plugin's `collect` captures it and chains to whatever statusLine command was installed before, passing stdin and stdout through untouched. Percentages come from `used_percentage`; reset times from `resets_at`.
+
+   That payload is a snapshot Claude Code refreshes on its own schedule, so it can lag the live figure by several points — the same figure Claude Code's own `/usage` panel fetches on demand. When the usage-API cache is fresh (see below), the shared session and weekly windows are taken from it instead, which keeps the tab bar in step with `/usage`. `USE_API=0` or `API_TTL=0` falls back to the payload.
 3. **Codex: local app-server read.** `bin/codex-limits.py` starts `codex app-server --listen stdio://`, sends `initialize`, `initialized`, then `account/rateLimits/read`, and reads `usedPercent` plus `resetsAt` from each bucket's primary and secondary window. The window label comes from `windowDurationMins` (300 → `5h`, 10080 → `wk`). Results are cached for 15 minutes, with a refresh at most every 2 minutes; a failed read leaves the last good cache in place.
 4. **Antigravity: CLI read, cached.** `bin/agy-usage.py` runs `agy -p "/usage" --output-format json`, inverts the reported remaining fraction into percent used, and caches the result. The CLI authenticates and hits the network per call, so the tab bar only ever reads the cache and a detached background refresh (at most every 5 minutes) fills it; a cached answer stays usable for an hour. When quota is unavailable the reader reports why instead of guessing: `ineligible` (account refused, e.g. by location), `unauthenticated` (run `agy` once to sign in), or the raw error.
 
@@ -130,6 +133,7 @@ Three independent pieces:
 - **Antigravity says "not available for this account"**: Google refused the signed-in account — most often a location restriction, or a missing licence on a work account. Nothing to configure here; the message comes from Antigravity itself. Confirm with `agy -p "/usage"` in a terminal.
 - **No Fable / extra-usage entries**: the Claude usage API needs the macOS keychain. Approve the keychain prompt on first fetch, or check `USE_API` is not `0`. On Linux these entries are unavailable.
 - **A keychain dialog appeared**: that is the first usage-API fetch reading your own Claude Code OAuth token. "Always Allow" stops it from asking again.
+- **The weekly figure is a few points below Claude Code's `/usage`**: that is the statusLine payload lagging the live number. With `USE_API=1` the plugin prefers the fresh API answer, so check the keychain fetch is working (see the Fable/extra-usage entry above) or lower `API_TTL`.
 - **A tab-bar mark renders as a box or looks off-centre**: that glyph is missing from your terminal font and is being drawn by a fallback. Override `GLYPH_CLAUDE`, `GLYPH_CODEX` or `GLYPH_AGY` in the plugin config with a mark your font carries.
 - **Percentages look uncolored in the tab bar**: expected. The tab bar renders no ANSI colors; `!!` above 80 is the only marker there. The dashboard has the colors.
 

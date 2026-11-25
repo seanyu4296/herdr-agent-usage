@@ -128,10 +128,14 @@ windows() {
 # The token stays in this process; only the usage JSON (no secrets) is cached.
 API_CACHE="$CLAUDE_STATE_DIR/api_usage.json"
 USE_API=${USE_API:-1}
+# How long a fetched usage-API answer is trusted for the shared windows. The
+# statusLine payload can lag the live figure by a few points, so this is what
+# keeps the tab bar close to Claude Code's own /usage panel.
+API_TTL=${API_TTL:-300}
 
 fetch_api() {
   [ "$USE_API" = "1" ] || return 0
-  [ "$(payload_age "$API_CACHE")" -lt 300 ] && return 0
+  [ "$(payload_age "$API_CACHE")" -lt "$API_TTL" ] && return 0
   [ "$(payload_age "$API_CACHE.failed")" -lt 300 ] && return 0
   # No token (keychain denied or logged out): ask again hourly, not every 5 min.
   [ "$(payload_age "$API_CACHE.notoken")" -lt 3600 ] && return 0
@@ -270,11 +274,39 @@ focused_agent() {
     jq -r '.result.pane.agent // empty' 2>/dev/null
 }
 
+# The statusLine payload is a snapshot Claude Code refreshes on its own schedule
+# (session events plus its refreshInterval), so it lags the live figure its /usage
+# panel shows. When the OAuth usage cache is fresh, take the shared session and
+# weekly windows from there and fall back to the payload per window.
+api_shared_windows() {
+  [ "$USE_API" = "1" ] || return 0
+  [ -f "$API_CACHE" ] || return 0
+  [ "$(payload_age "$API_CACHE")" -lt "$API_TTL" ] || return 0
+  jq -r '
+    (.limits // [])[]
+    | select(.kind == "session" or .kind == "weekly_all")
+    | [
+        (if .kind == "session" then "five_hour" else "seven_day" end),
+        (.percent | round | tostring),
+        ((.resets_at // "") as $r |
+          (if ($r|type) == "number" then $r
+           else (try (($r | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601) + (if ($r | test("\\.[0-9]")) then 1 else 0 end)) catch 0)
+           end) | tostring)
+      ] | @tsv' "$API_CACHE" 2>/dev/null
+}
+
 # Readers emit a common row: window key, percent used, reset timestamp (0 if unknown).
 claude_windows() {
-  local file="$1"
-  windows "$file" | grep -q '^five_hour' || printf 'five_hour\t0\t0\n'
-  windows "$file"
+  local file="$1" api_rows
+  api_rows=$(api_shared_windows)
+  if [ -n "$api_rows" ]; then
+    printf '%s\n' "$api_rows"
+    # A shared window the API omitted still comes from the payload.
+    windows "$file" | grep -v '^five_hour\|^seven_day'
+  else
+    windows "$file" | grep -q '^five_hour' || printf 'five_hour\t0\t0\n'
+    windows "$file"
+  fi
   api_extra_windows
 }
 
